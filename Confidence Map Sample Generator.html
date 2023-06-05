@@ -1,0 +1,574 @@
+<!-- (C) Copyright IBM Corp. 2016 -->
+<!DOCTYPE html>
+
+<html>
+<head>
+	<title>Confidence Map Sample Generator</title>
+	<meta http-equiv="Content-type" content="text/html;charset=UTF-8"/>
+
+	<link rel="stylesheet" href="dijit/themes/claro/claro.css">
+	<script>dojoConfig = {parseOnLoad: true}</script>
+	<script src='dojo/dojo.js'></script>
+	<script>
+var dataStore;
+var lines;
+var map;
+//var previewMap;
+var reader = new FileReader();
+var file;
+
+var theDate = new Date();
+var day = theDate.getDate();
+if (day < 10) {
+	day = "0"+day;
+}
+var month = theDate.getMonth();
+month++;
+if (month <10) {
+	month = "0"+month;
+}
+var year = theDate.getFullYear();
+dateStamp = day+"."+month+"."+year;
+
+//Initialise colour model as Red, Amber, Green
+var colours = "RAG";
+
+var labelAttrName="";
+
+function updateFontSize() {
+
+	var fontSize = document.getElementById("fontSize");
+	if (isNaN(fontSize.value)) {
+		alert("Error: font size must be a number");
+		return;
+	}
+	var theStyleSheetIndex = -1;
+	for (var i = 0; i < document.styleSheets.length; i++) {
+		if (document.styleSheets[i].title == "confmapStyle") {
+			theStyleSheetIndex = i;
+		}
+	}
+	if ( theStyleSheetIndex == -1) {
+		//Couldn't find the Stylesheet
+		alert("Error: unable to find confmapStyle stylesheet, check CSS.");
+		return;
+	}
+	var theCssRule = -1;
+	for (var i = 0; i < document.styleSheets[theStyleSheetIndex].cssRules.length; i++) {
+		if (document.styleSheets[theStyleSheetIndex].cssRules[i].selectorText == ".dojoxTreeMapLeaf") {
+			theCssRule = i;
+		}
+	}
+	if (theCssRule == -1) {
+		//Couldn't find the CSS rule
+		alert("Error: unable to find cssRule for .dojoxTreeMapLeaf, check CSS.");
+		return;
+	}
+	if (fontSize.value == '') {
+		//Nothing set, so use default
+		document.styleSheets[theStyleSheetIndex].cssRules[theCssRule].style.fontSize = fontSize.placeholder+"px";
+	} else {
+		document.styleSheets[theStyleSheetIndex].cssRules[theCssRule].style.fontSize = fontSize.value+"px";
+	}
+	updateMap();
+}
+
+//Allow user to change colour model and use advanced options
+function updateMap() {
+	if (map != null) {
+		if (setSize()) {
+			drawMap();
+		} else {
+			return;
+		}
+	}
+}
+
+function changeColours(radio) {
+	colours = radio.value;
+	updateMap();
+}
+
+function toggleArrows(updateTheMap) {
+	if (map != null) {
+	    if (document.getElementById("arrowCheckBox").checked && labelAttrName=="previous") {
+				map.set("labelAttr", "previous");
+		} else {
+			map.set("labelAttr", "label");
+		}
+		if (updateTheMap) {
+			updateMap();
+		}
+	}
+}
+
+function setSize() {
+	//set width and height
+	ret=true;
+	customWidth=true;
+	customHeight=true;
+	width=document.getElementById("mapWidth");
+	height=document.getElementById("mapHeight");
+	if (width.value == '') {
+		document.getElementById("treemapWrapper").style.width = width.placeholder+"px";//'1024px';
+		document.getElementById("treemap").style.width = width.placeholder+"px";//'1024px';
+		customWidth=false;
+	}
+	if (height.value == '') {
+		document.getElementById("treemap").style.height = height.placeholder+"px";//'768px';
+		customHeight=false;
+	}
+	if (isNaN(width.value) || isNaN(height.value)){
+		alert("Error: map height and width must be numeric.");
+		ret = false;
+	} else {
+		if (customWidth) {
+			document.getElementById("treemapWrapper").style.width = (+width.value + 3)+'px';
+			document.getElementById("treemap").style.width = (+width.value + 3)+'px';
+		}
+		if (customHeight) {
+			document.getElementById("treemap").style.height = height.value+'px';
+		}
+	}
+	return ret;
+}
+
+function generateImage() {
+
+	if (map != null ) {
+		require(["dojo/ready", "dojo/html2canvas"],
+		function (ready) {
+			// Render Canvas
+		    html2canvas(document.getElementById("treemapWrapper"), {
+				onrendered: function(canvas) {
+					var treeMapImage = canvas.toDataURL("image/png");
+					window.open(treeMapImage);
+				}
+			});
+		});
+	} else {
+		return
+	}
+}
+
+function generatePreviewImage() {
+	if (map != null) {
+		require(["dojo/ready", "dojo/html2canvas"],
+		function (ready) {
+			// Render Canvas
+		    html2canvas(document.getElementById("treemapWrapper"), {
+				onrendered: function(canvas) {
+					var treeMapImage = canvas.toDataURL("image/png");
+					var previewCanvas = document.getElementById('previewCanvas');
+					var canvasContext = previewCanvas.getContext('2d');
+        			var mapImage = new Image();
+        			mapImage.onload = function() {
+          				canvasContext.drawImage(this, 0, 0, 250, 187);
+        			};
+					mapImage.src = treeMapImage;
+				}
+			});
+		});
+	}
+}
+
+function processFile(event) {
+	require(["dojo/store/Memory", "dojo/dom"], function (Memory, dom) {
+
+		dataStore=null;
+		lines=null;
+		reader = new FileReader();
+		file = event.target.files[0];
+		reader.readAsText(file);
+		if (file.name.substring(file.name.length-4,file.name.length) != ".csv") {
+			alert("Error: input file name must end with .csv");
+			return;
+		}
+		reader.onload = function (event) {
+			var contents = event.target.result;
+			document.getElementById("fileContents").value=contents;
+			dom.byId("treeTitleInput").value = file.name.split(".")[0];
+			processCSV(contents);
+		};
+	});
+}
+
+function processTextArea() {
+	require(["dojo/store/Memory", "dojo/dom"], function (Memory, dom) {
+		var contents = document.getElementById("fileContents").value;
+		if (contents == "") {
+			alert("Error: Text area is empty.");
+			return;
+		}
+		processCSV(contents);
+	});
+}
+
+function processCSV(contents) {
+	require(["dojo/store/Memory", "dojo/dom"], function (Memory, dom) {
+
+				contents = contents.replace(/, /g, ",");
+				contents = contents.replace(/\"/g, "");
+				//split lines
+				//var allTextLines = contents.split(/\r\n|\n/);
+				var allTextLines = contents.split(/\r\n|\n/);
+				var headers = allTextLines[0].split(',');
+				if (headers.length < 2) {
+				  alert("Error: input file must start with: Component,Size,Confidence");
+				  //exit
+				  return;
+				}
+
+				//ignore anything after the first three headers e.g., supporting notes, unless "previous" exists as a headers
+				if ((headers.length > 3) && (headers[3].toLowerCase() == "previous")){
+					headers = [headers[0],headers[1],headers[2],headers[3]];
+				} else {
+					headers = [headers[0],headers[1],headers[2]];
+				}
+				var firstLine=headers[0].toLowerCase()+","+headers[1].toLowerCase()+","+headers[2].toLowerCase()+",";
+				if (firstLine != "component,size,confidence,") {
+				  alert("Error: input file must start with: Component,Size,Confidence");
+				  //exit
+				  return;
+				}
+				var lines = {
+					idProperty : "component"
+				}
+				lines.data = [];
+				var label = []; //reset dynamic label
+				for (var i = 1; i < allTextLines.length; i++) {
+					var data = allTextLines[i].split(',');
+					//only keep first three data columns
+					if (data.length >= headers.length) {
+						if (headers.length > 3) {
+							data = [data[0],data[1],data[2],data[3]]; //data[3] could be previous confidence value or random data
+						} else {
+							labelAttrName="label";
+							document.getElementById("arrowCheckBox").checked=false;
+							toggleArrows(false);
+						}
+						var newLine = {};
+						for (var j = 0; j < headers.length; j++) {
+							//Check that size and confidence values are nemeric
+							if ((headers[j].toLowerCase() == "size") || (headers[j].toLowerCase() == "confidence") || (headers[j].toLowerCase() == "previous")) {
+								if (isNaN(data[j])){
+									alert("Error: size and confidence values must be numeric. Check columns 2, 3 and 4 in the input file.");
+									return;
+								}
+							}
+							if ((headers[j].toLowerCase() == "confidence") || (headers[j].toLowerCase() == "previous")) {
+								//round confidence down if not whole ints and put the "" back in for the labels
+								data[j] = Math.floor(data[j]).toString();
+								//Force max confidence to be 5 and min confidence to be -1
+								if (data[j] > 5) {
+									data[j] = 5;
+								}
+								if (data[j] < -1) {
+									data[j] = -1;
+								}
+							}
+							label[i]=data[0]+"<br/>"+data[2]; //default label
+							if (headers[j].toLowerCase() == "previous") {
+								if (data[j] < data[j-1]) {
+									data[j]=data[j-1]+" &#x25B2;";
+								} else if (data[j] > data[j-1]) {
+									data[j]=data[j-1]+" &#x25BC;";
+								} else {
+									data[j]=data[j-1]+"";
+								}
+								labelAttrName=headers[3].toLowerCase();
+								data[j]=data[j-3]+"<br/>"+data[j]; //update confidence ref column with label
+								document.getElementById("arrowCheckBox").checked=true;
+								toggleArrows(false);
+							}
+							newLine[headers[j].toLowerCase()] = data[j];
+						}
+						newLine["label"] = label[i];
+						lines.data.push(newLine);
+					} else if (data.length==1 && i==allTextLines.length-1){
+						//whitespace at end of file
+					} else {
+					  alert("Error: missing data elements. There must be at least three elements for each line in the input file.\nCheck line: "+i);
+					  return
+					}
+				}
+				dataStore = new Memory(lines);
+				drawMap();
+		});
+	}
+
+function drawMap() {
+	require(["dojo/ready", "dojo/dom", "dojox/treemap/TreeMap",
+			"dojox/color/MeanColorModel", "dojo/_base/Color","dojo/html2canvas"],
+		function (ready, dom, TreeMap, MeanColorModel, Color) {
+			dojo.extend(dojox.color.MeanColorModel, {
+				getColor : function (value) {
+					if (colours == "RAG") {
+						if (value < 0) {
+							return new Color("#C0C0C0");
+						}
+						if (value >= 0 && value < 1) {
+							return new Color("#E71D32");
+						}
+						if (value >= 1 && value < 2) {
+							return new Color("#FF6600");
+						}
+						if (value >= 2 && value < 3) {
+							return new Color("orange");
+						}
+						if (value >= 3 && value < 4) {
+							return new Color("#FDD600");
+						}
+						if (value >= 4 && value < 5) {
+							return new Color("#B4E051");
+						}
+						if (value >= 5) {
+							return new Color("#5AA700");
+						} else {
+							return new Color("white");
+						}
+					}
+					//High confidence is dark grey
+					if (colours == "Grey") {
+						if (value < 0) {
+							return new Color("#3C4646");
+						}
+						if (value >= 0 && value < 1) {
+							return new Color("#5A5A5A");
+						}
+						if (value >= 1 && value < 2) {
+							return new Color("#777677");
+						}
+						if (value >= 2 && value < 3) {
+							return new Color("#959595");
+						}
+						if (value >= 3 && value < 4) {
+							return new Color("#AEAEAE");
+						}
+						if (value >= 4 && value < 5) {
+							return new Color("#C7C7C7");
+						}
+						if (value >= 5) {
+							return new Color("#E0E0E0");
+						} else {
+							return new Color("white");
+						}
+					}
+				}
+			});
+
+			dom.byId("treeTitle1").innerHTML = "";
+			dom.byId("treeTitle2").innerHTML = "";
+			document.getElementById("treemap").innerHTML = "";
+
+			//setSize();
+
+			var colorModel = new MeanColorModel(new Color(Color.named.red), new Color(Color.named.green));
+			// Create/Update TreeMap;
+			if (map == null) {
+				map = new TreeMap({
+						store : dataStore,
+						areaAttr : "size",
+						colorAttr : "confidence",
+						selectionMode : "single",
+						tooltipAttr : "component",
+						labelThreshold : 3,
+						labelAttr : labelAttrName,
+						colorModel : colorModel,
+						selectionMode : "none"
+					}, dom.byId("treemap"));
+			} else {
+				map.set("store", dataStore);
+				map.set("colorModel", colorModel);
+				//map.set("labelAttr", labelAttrName);
+			}
+			// Update Title
+			dom.byId("treeTitle1").innerHTML = "Generated on "+ dateStamp+" (c) Copyright 2016 IBM Corporation."
+			dom.byId("treeTitle2").innerHTML = dom.byId("treeTitleInput").value;
+			generatePreviewImage();
+	});
+}
+
+reader.onerror = function (event) {
+	alert("Error: File could not be read! Code " + event.target.error.code);
+}
+
+function showAdvanced() {
+	if (document.getElementById("advanced").style.display=='none') {
+		document.getElementById("advanced").style.display='block';
+		document.getElementById("advancedLabel").innerHTML = document.getElementById("advancedLabel").innerHTML.replace("+", "-");
+
+	} else {
+		document.getElementById("advanced").style.display='none';
+		document.getElementById("advancedLabel").innerHTML = document.getElementById("advancedLabel").innerHTML.replace("-", "+");
+	}
+}
+	</script>
+	</head>
+<!-- <body class="claro" style="overflow:hidden"> -->
+<body class="claro">
+	<div>
+	<div id="page-wrapper">
+	<div id="page-title">
+	<table>
+	<tr><td><img style="vertical-align: middle;position: center;" src="ConfidenceMapTitle.png" width="128" height="87"/></td>
+    <td><h1 style="vertical-align: middle;position: center;">Confidence Map Generator Sample</h1></td>
+	</tr>
+	</table>
+	</div>
+	<table style="width:99%"><tr>
+	<td style="width:50%">
+		<!-- <hr align="left" noshade /> -->
+		<p>
+			<b>1)</b> Select a Confidence Map csv file:
+			<p>
+				&nbsp;&nbsp;<input type="file" id="fileInput"/>
+			</p>
+		</p>
+		<p id="fileDisplayArea">
+			<b>2)</b> Select a Colour Model:
+			<form action="" onClick="" id="radioButton">
+				<input type="radio" name="colourScheme" id="colourScheme" onClick="changeColours(this)" value="RAG" checked>Red,Amber,Green<br/>
+				<input type="radio" name="colourScheme" id="colourScheme" onClick="changeColours(this)" value="Grey">Greyscale
+			</form>
+		</p>
+		<p>
+			<b>3)</b> Give your Confidence Map a title:
+			<p>
+				&nbsp;&nbsp;<input id="treeTitleInput" type="text" name="title" style="width:150px">
+				<input type="button" value="Update" onClick="updateMap()"/>
+			</p>
+		</p>
+		<p>
+			<b>4)</b> Create an image of Confidence Map to save it
+			<p>
+				&nbsp;&nbsp;<input type="button" value="Create Image" onClick="generateImage()"/>
+			</p>
+		</p>
+		<p>
+			<b>5)</b> Use your confidence map!
+		</p>
+	</td>
+	<td style="width:50%; vertical-align:center">
+		<div id="previewContainer">
+			<div id="previewTitle" class="previewTitle">[Preview]</div>
+			<canvas id="previewCanvas" width="250px" height="187px" style="margin: 20px;"></canvas>
+		</div>
+	</td>
+	</tr>
+	</table>
+	</div>
+	<!--  <hr align="left" width="40%" noshade /> -->
+	<p>
+		<span id="advancedLabel" onclick="showAdvanced()"> <a href="javascript:void(0);" > Advanced options [+]</a></span>
+		</br>
+		<div id="advanced" style="display:none">
+			<hr align="left" width="10%" noshade />
+			<p>Change the map size: <input id="mapWidth" type="text" name="map_width" style="width:30px" placeholder="1024"/>x<input id="mapHeight" type="text" name="map_height" style="width:23px" placeholder="768"/>width(px) x height(px)
+			<input type="button" value="Change Map Size" onClick="updateMap()"/>
+			</p>
+			<p>Trending arrows: <input id="arrowCheckBox" checked type="checkbox" onclick="toggleArrows(true)" value="Load CSV"> On / Off</p>
+			<p>Change the font size: <input id="fontSize" type="text" name="font_size" style="width:30px" placeholder="28"/>px
+				<input type="button" value="Change Font Size" onClick="updateFontSize()"/>
+			</p>
+			<p>Confidence data:</p>
+			<form action="javascript:processTextArea()" id="confidenceCSV">
+				<textArea id="fileContents" cols="50" rows="10" form="confidenceCSV">Component,Size,Confidence,Previous
+Box 1,100,5,5
+Box 2,80,4,4
+Box 3,60,3,3
+Box 4,40,2,2
+Box 5,20,1,1
+Box 6,10,0,0
+Box 7,5,-1,-1
+				</textArea>
+				<input type="submit" value="Load CSV">
+			</form>
+			<hr align="left" width="10%" noshade />
+		</div>
+	</p>
+	<p>
+		(C) Copyright IBM Corp. 2016
+	</p>
+	<p>
+		Provided "AS IS", with no warranty of any kind.
+	</p>
+	</div>
+	<div id="treemapWrapper" style="width:1024px;position:absolute; top:1250px">
+		<div id="treeTitle1" class="treemapTitle1"></div>
+		<div id="treeTitle2" class="treemapTitle2"></div>
+    	<div id="treemap" class="treemap" style="width:1024px;height:768px"></div>
+  	</div>
+</body>
+<script>
+	document.getElementById('fileInput').addEventListener('change', processFile, false);
+</script>
+<style type="text/css" title="confmapStyle">
+	@import "{{baseUrl}}/dojox/treemap/themes/TreeMap.css";
+
+	h1 {
+    	font-family: Helvetica Neue, Helvetica, Arial, Geneva, sans-serif, Verdana, Geneva, sans-serif;
+		color : black;
+		background-size:100% 100%;
+		background-repeat:no-repeat;
+	}
+
+	p, form, .previewTitle {
+		font-family: Helvetica Neue, Helvetica, Arial, Geneva, sans-serif, Verdana, Geneva, sans-serif;
+		color : black;
+		font-size: 13px;
+	}
+
+	.treemapTitle1 {
+		font-family: Helvetica Neue, Helvetica, Arial, Geneva, sans-serif;
+		font-size: 10px;
+		background-color: white;
+		text-align: center;
+		border 0px;
+	}
+
+	.treemapTitle2 {
+		font-family: Helvetica Neue, Helvetica, Arial, Geneva, sans-serif;
+		font-size: 20px;
+		background-color: white;
+		border 0px solid white;
+	}
+
+	#previewContainer {
+		width: 290px;
+		height: 230px;
+		border: 1px solid black;
+		position: relative;
+	}
+
+	#previewTitle {
+		position: absolute;
+		top: -15px;
+		left: 10px;
+		background: white;
+		padding: 5px;
+	}
+
+	.treemap {
+		background-color: white;
+	}
+	.dojoxTreeMap {
+		font-family: Helvetica Neue, Helvetica, Arial, Geneva, sans-serif;
+		font-size: 18px;
+		color: black;
+	}
+
+	.dojoxTreeMapLeaf {
+		text-align: center;
+		font-size: 28px;
+		font-weight:bold;
+		display: relative;
+		word-wrap: break-word;
+		background-color: white;
+		-webkit-border-radius: 15px 15px;
+		-moz-border-radius: 15px 15px;
+		border-radius: 15px 15px;
+		margin: 2px;
+	}
+</style>
+</html>
